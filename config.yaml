@@ -1,0 +1,58 @@
+# Autonomous Macro Replay System Configuration
+
+# Image Embedding Configuration
+embedding:
+  provider: "voyage"                        # Embedding provider
+  model_name: "voyage-multimodal-3"        # Voyage AI multimodal model
+  embedding_dim: 1024                      # Dimension of embedding vectors
+  validate_embeddings: true                # Enable embedding validation
+  timeout: 30                               # API request timeout in seconds
+
+# Similarity Matching
+matching:
+  similarity_threshold: 0.90    # Cosine similarity threshold for replay
+  top_k_candidates: 5           # Number of similar nodes to consider
+  min_visit_count: 1            # Minimum visits before trusting a node
+
+# Macro Graph
+graph:
+  max_nodes: 100000              # Maximum nodes before pruning
+  enable_pruning: false          # Prune low-success nodes
+  min_success_rate: 0.7          # Minimum success rate to keep node
+
+# Vector Index (FAISS)
+vector_index:
+  index_type: "IndexFlatIP"      # Inner product for cosine similarity
+  use_gpu: false                 # Use GPU for FAISS (if available)
+  rebuild_interval: 1000         # Rebuild index every N additions
+
+# Data Processing
+data:
+  training_files:
+    - "data_validation_split/maf_train.json"
+    - "data_validation_split/sona_train.json"
+  validation_files:
+    - "data_validation_split/maf_validate.json"
+    - "data_validation_split/sona_validate.json"
+  batch_size: 10
+  max_image_size: [1024, 1024]   # Resize images if larger
+
+# Action Extraction
+actions:
+  coordinate_variance: 10         # Pixel tolerance for coordinate matching
+
+# Logging & Monitoring
+logging:
+  level: "INFO"
+  log_file: "macro_replay.log"
+  save_embeddings: true
+  save_graph_snapshots: true
+  snapshot_interval: 500          # Save graph every N conversations
+
+# Validation
+validation:
+  enable_fallback_logging: true
+  save_failure_cases: true
+  metrics_output: "validation_metrics.json"
+
+
