@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import faiss
 from replay_types import ReplayDecision
+from utils import compare_actions
 
 
 @dataclass
@@ -355,8 +356,8 @@ class GraphBuilder:
             else:  # NO_ACTION
                 action_taken = "NO_ACTION"
             
-            # Compare actions
-            is_correct = (action_taken == correct_action)
+            # Compare actions with fuzzy matching for click coordinates
+            is_correct = compare_actions(action_taken, correct_action, click_tolerance=10)
             
             # Store comparison result (including think_text for visualization)
             self.comparison_results.append({

@@ -20,7 +20,7 @@ from image_embedder import ImageEmbedder
 from macro_graph import MacroGraph
 from replay_engine import ReplayEngine
 from replay_types import ReplayDecision
-from utils import print_statistics, truncate_text
+from utils import print_statistics, truncate_text, compare_actions
 
 
 class GraphTester:
@@ -99,8 +99,8 @@ class GraphTester:
             else:  # NO_ACTION
                 predicted_action = "NO_ACTION"
             
-            # Check if prediction is correct
-            is_correct = (predicted_action == correct_action)
+            # Check if prediction is correct with fuzzy matching for click coordinates
+            is_correct = compare_actions(predicted_action, correct_action, click_tolerance=10)
             
             # For AI_FALLBACK, it's not wrong, just needs human/AI assistance
             is_ai_fallback = (result.decision == ReplayDecision.AI_FALLBACK)

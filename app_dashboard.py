@@ -10,7 +10,10 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import base64
+from io import BytesIO
 from pathlib import Path
+from PIL import Image
 
 from macro_graph import MacroGraph
 from utils import truncate_text, format_key_label, format_stat_value
@@ -46,6 +49,28 @@ def load_report(report_path="reports/report_latest.json"):
         return None
     with open(report_path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+@st.cache_data
+def load_conversation_data():
+    """Load all conversation JSON files for screenshot access."""
+    # This matches EXACTLY how train.py loads data
+    conversations = {}
+    conv_index = 0
+    
+    # Load ONLY the files that train.py uses
+    train_files = ['data_validation_split/maf_train.json']
+    
+    for file_path in train_files:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Each conversation object gets an index
+                for conv_obj in data:
+                    conversations[conv_index] = conv_obj
+                    conv_index += 1
+    
+    return conversations
 
 
 @st.cache_resource
@@ -128,7 +153,7 @@ def main():
     # Try to load test embeddings and report (may not exist)
     test_embeddings, test_step_indices = load_test_embeddings("embeddings/test_embeddings.npz")
     test_report = load_test_report("test_results/test_report_latest.json")
-
+    
     # Route to pages
     if page == "📊 Overview":
         show_overview(report, graph)
@@ -415,15 +440,15 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
     """Show 2D graph visualization with training and test data including predictions."""
     st.header("🌐 Graph Visualization")
     st.markdown("Nodes positioned by **semantic similarity** from embeddings. Select a step to see prediction details!")
-
+    
     if graph is None:
         st.error("Graph not loaded!")
         return
-
+    
     if embeddings is None:
         st.warning("Training embeddings not found. Run training with embedding save enabled.")
         return
-
+    
     # Check if test embeddings are available
     if test_embeddings is not None and test_step_indices is not None and len(test_embeddings) > 0:
         st.success(f"✅ Loaded {test_embeddings.shape[0]} test embeddings!")
@@ -433,28 +458,28 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
         # Combine all embeddings for joint MDS projection
         all_embeddings = np.vstack([embeddings, test_embeddings])
         is_training = [True] * len(embeddings) + [False] * len(test_embeddings)
-
+        
         # Reduce to 2D
         from sklearn.manifold import MDS
         with st.spinner("Computing MDS projection for combined data..."):
             reducer = MDS(n_components=2, random_state=42, dissimilarity='euclidean', n_init=1)
             pos_2d = reducer.fit_transform(all_embeddings)
-
+        
         # Split back into training and test positions
         train_pos_2d = pos_2d[:len(embeddings)]
         test_pos_2d = pos_2d[len(embeddings):]
-
+        
         has_test_data = True
     else:
         st.info(f"🎨 Reducing {embeddings.shape[1]}D embeddings to 2D using MDS...")
         st.warning("⚠️ Test embeddings not found. Run testing to generate test embeddings.")
-
+        
         # Reduce to 2D (training only)
         from sklearn.manifold import MDS
         with st.spinner("Computing MDS projection..."):
             reducer = MDS(n_components=2, random_state=42, dissimilarity='euclidean', n_init=1)
             train_pos_2d = reducer.fit_transform(embeddings)
-
+        
         has_test_data = False
     
     # Settings for visualization (BEFORE creating DataFrame)
@@ -477,13 +502,9 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
     
     st.markdown("---")
     
-    # Create mapping from conversation_id + step_index to node_id
-    step_to_node_id = {}
-    for node_id in node_ids:
-        node = graph.nodes[node_id]
-        step_to_node_id[(node.conversation_id, node.step_index)] = node_id
-    
     # Build step selector options from ALL training steps (not just unique nodes)
+    # Note: We use matched_node_id from comparison_results, not a lookup table,
+    # because many steps were deduplicated/merged during training
     step_selector_options = []
     step_to_node_map = {}  # Maps step selector key to node_id or test index
     
@@ -492,8 +513,8 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
             conv_id = result['conversation_id']
             step_idx = result['step_index']
             
-            # Find which node this step maps to
-            node_id = step_to_node_id.get((conv_id, step_idx))
+            # Use matched_node_id from the report (the node this step was matched to)
+            node_id = result.get('matched_node_id')
             
             pred_info = {
                 'predicted': result['action_taken'],
@@ -504,14 +525,24 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
             }
             
             # Add to selector options - now showing ALL steps
-            selector_key = f"Train Step {step_idx} (Conv {conv_id}) → Node {node_id}"
+            decision = result['decision']
+            match_icon = "✅" if result['is_correct'] else "❌"
+            
+            # Always include decision in label for filtering
+            if node_id is not None:
+                selector_key = f"{match_icon} Train Step {step_idx} (Conv {conv_id}, Node {node_id}) → {decision}"
+            else:
+                # No node (shouldn't happen for REPLAY, but could for edge cases)
+                selector_key = f"{match_icon} Train Step {step_idx} (Conv {conv_id}) → {decision}"
+            
             step_selector_options.append(selector_key)
             step_to_node_map[selector_key] = {
                 'type': 'train',
                 'node_id': node_id,
                 'conv_id': conv_id,
                 'step_idx': step_idx,
-                'pred_info': pred_info
+                'pred_info': pred_info,
+                'think_text': result.get('think_text')  # Store thinking block directly
             }
     
     # Create DataFrame for plotting (still using unique nodes)
@@ -546,20 +577,29 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                     'correct': result['correct_action'],
                     'is_correct': result['is_correct'],
                     'decision': result['decision'],
-                    'confidence': result.get('confidence', 0)
+                    'confidence': result.get('confidence', 0),
+                    'think_text': result.get('think_text')
                 }
         
         for i, step_idx in enumerate(test_step_indices):
             pred_info = test_predictions.get(step_idx, None)
             
             # Add to selector options
-            selector_key = f"Test Step {step_idx}"
+            if pred_info:
+                match_icon = "✅" if pred_info['is_correct'] else "❌"
+                decision = pred_info['decision']
+                selector_key = f"{match_icon} Test Step {step_idx} → {decision}"
+            else:
+                selector_key = f"Test Step {step_idx}"
+            
             step_selector_options.append(selector_key)
             step_to_node_map[selector_key] = {
                 'type': 'test',
                 'test_index': i,
                 'step_idx': step_idx,
-                'pred_info': pred_info
+                'pred_info': pred_info,
+                'think_text': pred_info.get('think_text') if pred_info else None,  # Store thinking block directly
+                'conv_id': None  # Test data doesn't have conv_id in the same way
             }
             
             all_data.append({
@@ -582,41 +622,156 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
     # Step selector with navigation
     st.markdown("### 🔍 Step Inspector")
     
-    # Navigation controls
-    col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 5, 1])
+    # Show current selection at the top (if any)
+    if 'current_step_index' in st.session_state and st.session_state.current_step_index > 0:
+        temp_options = ["None"] + step_selector_options  # Temporarily build to get selection
+        if st.session_state.current_step_index < len(temp_options):
+            current_selection = temp_options[st.session_state.current_step_index]
+            st.info(f"📍 **Currently Viewing:** {current_selection}")
     
-    # Find current index
-    all_options = ["None"] + step_selector_options
-    current_index = 0
-    if 'selected_step_index' in st.session_state:
-        current_index = st.session_state.selected_step_index
+    # Add filters for predictions
+    st.markdown("**Filters:**")
     
-    with col1:
-        if st.button("⏮️ First"):
-            st.session_state.selected_step_index = 1 if len(all_options) > 1 else 0
-            st.rerun()
-    with col2:
-        if st.button("◀️ Prev"):
-            if current_index > 1:
-                st.session_state.selected_step_index = current_index - 1
-                st.rerun()
-    with col3:
-        if st.button("Next ▶️"):
-            if current_index < len(all_options) - 1:
-                st.session_state.selected_step_index = current_index + 1
-                st.rerun()
-    with col4:
-        selected_step = st.selectbox(
-            f"Select from {len(step_selector_options)} steps:",
-            all_options,
-            index=current_index,
-            key="step_selector_viz",
-            on_change=lambda: st.session_state.update({'selected_step_index': all_options.index(st.session_state.step_selector_viz)})
+    # Row 1: Correctness filter
+    filter_col1, filter_col2 = st.columns([2, 4])
+    with filter_col1:
+        correctness_filter = st.radio(
+            "By Result:",
+            ["All", "✅ Correct", "❌ Incorrect"],
+            horizontal=True,
+            key="correctness_filter"
         )
-        # Update session state
-        if 'selected_step_index' not in st.session_state:
-            st.session_state.selected_step_index = all_options.index(selected_step)
-    with col5:
+    
+    with filter_col2:
+        # Show count info
+        total_steps = len(step_selector_options)
+        correct_count = sum(1 for key in step_selector_options if "✅" in key)
+        incorrect_count = sum(1 for key in step_selector_options if "❌" in key)
+        st.info(f"📊 Total: {total_steps} | ✅ Correct: {correct_count} ({correct_count/total_steps*100:.1f}%) | ❌ Incorrect: {incorrect_count} ({incorrect_count/total_steps*100:.1f}%)")
+    
+    # Row 2: Decision type filter
+    decision_col1, decision_col2 = st.columns([2, 4])
+    with decision_col1:
+        decision_filter = st.radio(
+            "By Decision:",
+            ["All", "🎯 REPLAY", "🤖 AI_FALLBACK", "⏸️ NO_ACTION"],
+            horizontal=True,
+            key="decision_filter"
+        )
+    
+    with decision_col2:
+        # Show decision counts (case-insensitive)
+        replay_count = sum(1 for key in step_selector_options if "replay" in key.lower())
+        ai_fallback_count = sum(1 for key in step_selector_options if "ai_fallback" in key.lower())
+        no_action_count = sum(1 for key in step_selector_options if "no_action" in key.lower())
+        st.info(f"🎯 REPLAY: {replay_count} | 🤖 AI_FALLBACK: {ai_fallback_count} | ⏸️ NO_ACTION: {no_action_count}")
+    
+    # Apply filters to step selector options
+    filtered_options = step_selector_options
+    
+    # Apply correctness filter
+    if correctness_filter == "✅ Correct":
+        filtered_options = [opt for opt in filtered_options if "✅" in opt]
+    elif correctness_filter == "❌ Incorrect":
+        filtered_options = [opt for opt in filtered_options if "❌" in opt]
+    
+    # Apply decision filter (case-insensitive)
+    if decision_filter == "🎯 REPLAY":
+        filtered_options = [opt for opt in filtered_options if "replay" in opt.lower()]
+    elif decision_filter == "🤖 AI_FALLBACK":
+        filtered_options = [opt for opt in filtered_options if "ai_fallback" in opt.lower()]
+    elif decision_filter == "⏸️ NO_ACTION":
+        filtered_options = [opt for opt in filtered_options if "no_action" in opt.lower()]
+    
+    # Show filtered results count
+    if len(filtered_options) > 0:
+        st.success(f"🔍 **Filtered Results: {len(filtered_options)} steps found**")
+    else:
+        st.warning(f"⚠️ **No steps match the current filter combination**")
+        with st.expander("💡 Debugging Info"):
+            st.write(f"Correctness filter: {correctness_filter}")
+            st.write(f"Decision filter: {decision_filter}")
+            st.write(f"Total steps before filtering: {len(step_selector_options)}")
+            
+            # Show sample of available options
+            st.write("\nSample of first 5 options:")
+            for opt in step_selector_options[:5]:
+                st.code(opt)
+    
+    all_options = ["None"] + filtered_options
+    
+    # Initialize session state for step navigation
+    if 'current_step_index' not in st.session_state:
+        st.session_state.current_step_index = 0  # Start at "None"
+    
+    # Reset index if filter changed
+    if 'last_correctness_filter' not in st.session_state:
+        st.session_state.last_correctness_filter = correctness_filter
+    if 'last_decision_filter' not in st.session_state:
+        st.session_state.last_decision_filter = decision_filter
+    
+    if (st.session_state.last_correctness_filter != correctness_filter or 
+        st.session_state.last_decision_filter != decision_filter):
+        st.session_state.current_step_index = 0  # Reset to "None"
+        st.session_state.last_correctness_filter = correctness_filter
+        st.session_state.last_decision_filter = decision_filter
+    
+    # Ensure index is within bounds
+    if st.session_state.current_step_index >= len(all_options):
+        st.session_state.current_step_index = 0
+    
+    # Navigation buttons with callbacks
+    def go_first():
+        st.session_state.current_step_index = 1  # Skip "None"
+    
+    def go_prev():
+        if st.session_state.current_step_index > 1:
+            st.session_state.current_step_index -= 1
+    
+    def go_next():
+        if st.session_state.current_step_index < len(all_options) - 1:
+            st.session_state.current_step_index += 1
+    
+    def go_last():
+        st.session_state.current_step_index = len(all_options) - 1
+    
+    st.markdown("**Navigation:**")
+    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 1, 1, 3])
+    
+    with nav_col1:
+        st.button("⏮️ First", on_click=go_first, use_container_width=True)
+    
+    with nav_col2:
+        st.button("◀️ Prev", on_click=go_prev, use_container_width=True)
+    
+    with nav_col3:
+        st.button("▶️ Next", on_click=go_next, use_container_width=True)
+    
+    with nav_col4:
+        st.button("⏭️ Last", on_click=go_last, use_container_width=True)
+    
+    # Dropdown selector with callback to track manual changes
+    def on_selectbox_change():
+        # Only update if user manually changed the selectbox
+        new_index = all_options.index(st.session_state.step_selector_viz)
+        st.session_state.current_step_index = new_index
+    
+    st.markdown("**Select Step:**")
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        # Get the currently selected step based on index
+        selected_step = all_options[st.session_state.current_step_index]
+        
+        # Display selectbox with default value
+        st.selectbox(
+            f"🔍 Choose from {len(filtered_options)} steps:",
+            all_options,
+            index=st.session_state.current_step_index,
+            key="step_selector_viz",
+            on_change=on_selectbox_change
+        )
+    
+    with col2:
         if selected_step != "None" and selected_step in step_to_node_map:
             step_info = step_to_node_map[selected_step]
             pred_info = step_info.get('pred_info')
@@ -629,6 +784,9 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
     if selected_step != "None" and selected_step in step_to_node_map:
         step_info = step_to_node_map[selected_step]
         pred_info = step_info.get('pred_info')
+        
+        # Show currently selected step prominently
+        st.markdown(f"### 🎯 Currently Selected: `{selected_step}`")
         
         if pred_info:
             st.markdown("#### 📊 Prediction Details")
@@ -666,17 +824,76 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**💭 Thinking/Reasoning:**")
-                if original_data and 'think_text' in original_data and original_data['think_text']:
-                    st.text_area("", value=original_data['think_text'], height=150, key=f"think_{selected_step}", label_visibility="collapsed")
+                # Try getting from step_info first (cached from loading)
+                think_text = step_info.get('think_text')
+                
+                if think_text:
+                    st.text_area("Thinking Block", value=think_text, height=150, key=f"think_{selected_step}", label_visibility="collapsed")
                 else:
-                    st.info("No thinking block available")
+                    st.warning("💡 No thinking block found\n\nRegenerate reports:\n```\npython3 train.py\npython3 test.py\n```")
             
             with col2:
                 st.markdown("**📸 Screenshot:**")
-                # Note: Screenshots are stored in original JSON files, not in reports
-                # We'd need to load from source data files
-                st.info("💡 Screenshot loading from source data coming soon!")
-                st.caption("Tip: Check the original training/test JSON files for images")
+                # Load conversation data and extract screenshot
+                try:
+                    conversations = load_conversation_data()
+                    screenshot_found = False
+                    debug_info = []
+                    
+                    if step_info['type'] == 'train':
+                        # For training data, use conversation_id and step_index
+                        conv_id = step_info.get('conv_id')
+                        step_idx = step_info.get('step_idx')
+                        
+                        debug_info.append(f"Looking for: conv_id={conv_id}, step_idx={step_idx}")
+                        debug_info.append(f"Total conversations loaded: {len(conversations)}")
+                        
+                        if conv_id in conversations:
+                            conv_obj = conversations[conv_id]
+                            messages = conv_obj.get('conversation', [])
+                            debug_info.append(f"Found conv with {len(messages)} messages")
+                            
+                            # Parse messages using data_parser (same as train.py)
+                            from data_parser import StreamingConversationParser
+                            parser = StreamingConversationParser()
+                            parser.reset(conversation_id=conv_id)
+                            
+                            # Process messages to extract steps
+                            for message in messages:
+                                step = parser.add_message(message)
+                                if step and step.step_index == step_idx:
+                                    target_screenshot = step.image_data
+                                    if target_screenshot and len(str(target_screenshot)) > 50:
+                                        # Display base64 image
+                                        if target_screenshot.startswith('data:image'):
+                                            target_screenshot = target_screenshot.split(',', 1)[1]
+                                        
+                                        image_data = base64.b64decode(target_screenshot)
+                                        image = Image.open(BytesIO(image_data))
+                                        st.image(image, width=700)
+                                        screenshot_found = True
+                                        break
+                            
+                            if not screenshot_found:
+                                debug_info.append(f"Screenshot not found for step {step_idx}")
+                        else:
+                            debug_info.append(f"Conv ID {conv_id} not in conversations")
+                    else:
+                        # For test data - not implemented yet
+                        step_idx = step_info.get('step_idx')
+                        debug_info.append(f"Test step_idx={step_idx}")
+                        st.info("Test data screenshot loading - to be implemented")
+                    
+                    if not screenshot_found:
+                        st.warning("📷 Screenshot not found")
+                        with st.expander("🔍 Debug Info"):
+                            for info in debug_info:
+                                st.text(info)
+                        
+                except Exception as e:
+                    st.error(f"Error loading screenshot: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
             
             # Show actions side by side
             st.markdown("---")
@@ -700,6 +917,21 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
             highlight_id = f"Train_{step_info['node_id']}"
         else:
             highlight_id = f"Test_{step_info['test_index']}"
+        
+        # Debug: Show which point should be highlighted
+        with st.expander("🔍 Highlight Debug Info"):
+            st.write(f"**Selected step:** {selected_step}")
+            st.write(f"**Step type:** {step_info['type']}")
+            st.write(f"**Highlight ID:** {highlight_id}")
+            st.write(f"**Node ID:** {step_info.get('node_id', 'N/A')}")
+            st.write(f"**Test Index:** {step_info.get('test_index', 'N/A')}")
+            
+            # Check if highlight_id exists in dataframe
+            if highlight_id:
+                matching = df[df['id'] == highlight_id]
+                st.write(f"**Found in graph:** {'Yes' if not matching.empty else 'No'}")
+                if not matching.empty:
+                    st.write(f"**Position:** x={matching.iloc[0]['x']:.2f}, y={matching.iloc[0]['y']:.2f}")
     
     # Add highlight column
     df['is_highlighted'] = df['id'] == highlight_id
@@ -748,14 +980,14 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                 x=train_highlight['x'],
                 y=train_highlight['y'],
                 mode='markers',
-                name='Selected Step',
+                name='⭐ SELECTED STEP',
                 marker=dict(
                     color='#FFD700',  # Gold
-                    size=20,
+                    size=35,  # Much larger!
                     symbol='star',
-                    line=dict(width=2, color='white')
+                    line=dict(width=3, color='red')  # Red outline for visibility
                 ),
-                text=[f"⭐ SELECTED ⭐<br>Node {row['node_id']}<br>Visits: {row['visits']}<br>Success: {row['success_rate']}" for _, row in train_highlight.iterrows()],
+                text=[f"⭐⭐⭐ SELECTED ⭐⭐⭐<br>Node {row['node_id']}<br>Visits: {row['visits']}<br>Success: {row['success_rate']}" for _, row in train_highlight.iterrows()],
                 hoverinfo='text',
                 showlegend=True
             ))
@@ -788,14 +1020,14 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                 x=test_highlight['x'],
                 y=test_highlight['y'],
                 mode='markers',
-                name='Selected Test',
+                name='⭐ SELECTED TEST',
                 marker=dict(
                     color='#FFD700',  # Gold
-                    size=15,
+                    size=30,  # Much larger!
                     symbol='star-diamond',
-                    line=dict(width=2, color='white')
+                    line=dict(width=3, color='red')  # Red outline for visibility
                 ),
-                text=[f"⭐ SELECTED ⭐<br>Test Step {row['step_index']}" for _, row in test_highlight.iterrows()],
+                text=[f"⭐⭐⭐ SELECTED ⭐⭐⭐<br>Test Step {row['step_index']}" for _, row in test_highlight.iterrows()],
                 hoverinfo='text',
                 showlegend=True
             ))
@@ -860,7 +1092,7 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
             labels={'visits': 'Visit Count'},
             title="Semantic Graph - MDS Projection (Colored by Visit Count)"
         )
-        
+    
         # Add highlighted point if exists
         if not plot_highlight.empty:
             fig.add_trace(go.Scatter(
@@ -892,7 +1124,7 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                 edge_x.extend([x0, x1, None])
                 edge_y.extend([y0, y1, None])
                 edge_count += 1
-
+        
         # Add edge traces
         if len(edge_x) > 0:
             fig.add_trace(go.Scatter(
@@ -904,7 +1136,7 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                 showlegend=False,
                 name=f'Edges ({edge_count})'
             ))
-
+            
             # Move edges to back (only if using plotly express figures)
             if color_by != "Data Type":
                 # Move scatter traces to the front
