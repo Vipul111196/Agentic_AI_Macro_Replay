@@ -1,0 +1,39 @@
+# Output directories
+models/*.pkl
+models/*.faiss
+reports/*.json
+test_results/*.json
+cache/*.pkl
+embeddings/*.npz
+
+# Keep directory structure
+!models/.gitkeep
+!reports/.gitkeep
+!test_results/.gitkeep
+!cache/.gitkeep
+!embeddings/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment
+.env
+data_validation_split/
+TRAIN_TEST_WORKFLOW.md
