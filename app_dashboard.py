@@ -15,8 +15,8 @@ from io import BytesIO
 from pathlib import Path
 from PIL import Image
 
-from macro_graph import MacroGraph
-from utils import truncate_text, format_key_label, format_stat_value
+from src.macro_graph import MacroGraph
+from src.utils import truncate_text, format_key_label, format_stat_value
 
 # Page config
 st.set_page_config(
@@ -43,7 +43,7 @@ st.markdown("""
 
 
 @st.cache_data
-def load_report(report_path="reports/report_latest.json"):
+def load_report(report_path="output/reports/report_latest.json"):
     """Load the execution report."""
     if not os.path.exists(report_path):
         return None
@@ -59,7 +59,7 @@ def load_conversation_data():
     conv_index = 0
     
     # Load ONLY the files that train.py uses
-    train_files = ['data_validation_split/maf_train.json']
+    train_files = ['data/data_validation_split_hannes/maf_train.json', 'data/data_validation_split_hannes/sona_train.json']
     
     for file_path in train_files:
         if os.path.exists(file_path):
@@ -74,7 +74,7 @@ def load_conversation_data():
 
 
 @st.cache_resource
-def load_graph(graph_path="models/trained_graph"):
+def load_graph(graph_path="output/models/trained_graph"):
     """Load the trained graph."""
     if not os.path.exists(f"{graph_path}.faiss"):
         return None
@@ -84,7 +84,7 @@ def load_graph(graph_path="models/trained_graph"):
 
 
 @st.cache_data
-def load_embeddings(embeddings_path="embeddings/trained_graph_embeddings.npz"):
+def load_embeddings(embeddings_path="output/embeddings/trained_graph_embeddings.npz"):
     """Load training embeddings for visualization."""
     if not os.path.exists(embeddings_path):
         return None, None
@@ -93,7 +93,7 @@ def load_embeddings(embeddings_path="embeddings/trained_graph_embeddings.npz"):
 
 
 @st.cache_data(ttl=60)  # Cache for 60 seconds to allow updates
-def load_test_embeddings(embeddings_path="embeddings/test_embeddings.npz"):
+def load_test_embeddings(embeddings_path="output/embeddings/test_embeddings.npz"):
     """Load test embeddings for visualization."""
     if not os.path.exists(embeddings_path):
         return None, None
@@ -106,7 +106,7 @@ def load_test_embeddings(embeddings_path="embeddings/test_embeddings.npz"):
 
 
 @st.cache_data
-def load_test_report(report_path="test_results/test_report_latest.json"):
+def load_test_report(report_path="output/test_results/test_report_latest.json"):
     """Load test report for predictions."""
     if not os.path.exists(report_path):
         return None
@@ -124,12 +124,12 @@ def main():
         st.header("⚙️ Settings")
         
         # Select report
-        report_files = list(Path("reports").glob("report_*.json")) if Path("reports").exists() else []
+        report_files = list(Path("output/reports").glob("report_*.json")) if Path("output/reports").exists() else []
         if report_files:
-            report_options = ["reports/report_latest.json"] + [f"reports/{f.name}" for f in sorted(report_files, reverse=True) if f.name != "report_latest.json"]
+            report_options = ["output/reports/report_latest.json"] + [f"output/reports/{f.name}" for f in sorted(report_files, reverse=True) if f.name != "report_latest.json"]
             selected_report = st.selectbox("Select Report", report_options)
         else:
-            selected_report = "reports/report_latest.json"
+            selected_report = "output/reports/report_latest.json"
         
         st.markdown("---")
         st.markdown("### 📚 Navigation")
@@ -147,12 +147,12 @@ def main():
         st.code("python main.py", language="bash")
         return
     
-    graph = load_graph("models/trained_graph")
-    embeddings, node_ids = load_embeddings("embeddings/trained_graph_embeddings.npz")
+    graph = load_graph("output/models/trained_graph")
+    embeddings, node_ids = load_embeddings("output/embeddings/trained_graph_embeddings.npz")
 
     # Try to load test embeddings and report (may not exist)
-    test_embeddings, test_step_indices = load_test_embeddings("embeddings/test_embeddings.npz")
-    test_report = load_test_report("test_results/test_report_latest.json")
+    test_embeddings, test_step_indices = load_test_embeddings("output/embeddings/test_embeddings.npz")
+    test_report = load_test_report("output/test_results/test_report_latest.json")
     
     # Route to pages
     if page == "📊 Overview":
@@ -854,7 +854,7 @@ def show_graph_viz(graph, embeddings, node_ids, test_embeddings=None, test_step_
                             debug_info.append(f"Found conv with {len(messages)} messages")
                             
                             # Parse messages using data_parser (same as train.py)
-                            from data_parser import StreamingConversationParser
+                            from src.data_parser import StreamingConversationParser
                             parser = StreamingConversationParser()
                             parser.reset(conversation_id=conv_id)
                             

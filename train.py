@@ -8,18 +8,20 @@ This script runs the complete training pipeline:
 3. Save graph, embeddings, and report
 4. Display summary statistics
 
-Run: python main.py
+Run: python train.py
 Then: streamlit run app_dashboard.py (to view results)
 """
 
 import json
+import yaml
 from datetime import datetime
+from pathlib import Path
 
-from data_parser import StreamingConversationParser
-from image_embedder import ImageEmbedder
-from macro_graph import MacroGraph, GraphBuilder
-from replay_engine import ReplayEngine
-from utils import print_statistics, truncate_text
+from src.data_parser import StreamingConversationParser
+from src.image_embedder import create_embedder, get_embedding_dim
+from src.macro_graph import MacroGraph, GraphBuilder
+from src.replay_engine import ReplayEngine
+from src.utils import print_statistics, truncate_text
 
 
 def main():
@@ -28,26 +30,54 @@ def main():
     print("🎮 AUTONOMOUS MACRO REPLAY SYSTEM - TRAINING")
     print("=" * 70)
     
-    # Configuration
-    TRAIN_FILES = ['data_validation_split/maf_train.json']
-    MAX_CONVERSATIONS = 5  # Set to None for all conversations
-    GRAPH_SIMILARITY = 0.95  # Threshold for merging nodes
-    REPLAY_SIMILARITY = 0.90  # Threshold for replay decisions
-    OUTPUT_PREFIX = "models/trained_graph"  # Save to models/ directory
+    # ========================================================================
+    # Load Configuration
+    # ========================================================================
+    print("\n📋 Loading configuration from config/config.yaml...")
+    with open('config/config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Extract configuration values
+    embedding_provider = config.get('embedding', {}).get('provider', 'voyage')
+    embedding_dim = get_embedding_dim(embedding_provider)
+    
+    # Data configuration
+    TRAIN_FILES = config.get('data', {}).get('training_files', ['data_validation_split/maf_train.json'])
+    MAX_CONVERSATIONS = config.get('data', {}).get('max_conversations_train', None)
+    
+    # Matching configuration
+    GRAPH_SIMILARITY = config.get('matching', {}).get('similarity_threshold', 0.90)
+    REPLAY_SIMILARITY = config.get('matching', {}).get('similarity_threshold', 0.90)
+    
+    # Output paths
+    OUTPUT_PREFIX = config.get('output', {}).get('trained_graph_path', 'models/trained_graph')
+    EMBEDDINGS_PATH = config.get('output', {}).get('trained_embeddings_path', 'embeddings/trained_graph_embeddings.npz')
+    REPORT_DIR = config.get('output', {}).get('training_report_dir', 'reports')
+    REPORT_LATEST = config.get('output', {}).get('training_report_latest', 'reports/report_latest.json')
+    
+    # Cache paths
+    if embedding_provider == "voyage":
+        CACHE_FILE = config.get('output', {}).get('voyage_cache', 'cache/embedding_cache.pkl')
+    else:
+        CACHE_FILE = config.get('output', {}).get('selfmade_cache', 'cache/selfmade_embedding_cache.pkl')
     
     print(f"\n⚙️  Configuration:")
+    print(f"  • Embedding provider: {embedding_provider.upper()}")
+    print(f"  • Embedding dimension: {embedding_dim}")
     print(f"  • Training files: {TRAIN_FILES}")
     print(f"  • Max conversations: {MAX_CONVERSATIONS if MAX_CONVERSATIONS else 'ALL'}")
     print(f"  • Graph similarity: {GRAPH_SIMILARITY}")
     print(f"  • Replay similarity: {REPLAY_SIMILARITY}")
+    print(f"  • Output path: {OUTPUT_PREFIX}")
+    print(f"  • Cache file: {CACHE_FILE}")
     
     # ========================================================================
     # STEP 1: Initialize Components
     # ========================================================================
     print("\n🔧 Step 1: Initializing components...")
     parser = StreamingConversationParser()
-    embedder = ImageEmbedder()
-    graph = MacroGraph(embedding_dim=1024, similarity_threshold=GRAPH_SIMILARITY)
+    embedder = create_embedder(provider=embedding_provider, cache_file=CACHE_FILE)
+    graph = MacroGraph(embedding_dim=embedding_dim, similarity_threshold=GRAPH_SIMILARITY)
     replay_engine = ReplayEngine(graph, similarity_threshold=REPLAY_SIMILARITY)
     builder = GraphBuilder(graph, embedder, replay_engine=replay_engine, link_sequential=True)
     print("✅ All components initialized")
@@ -154,25 +184,24 @@ def main():
     print(f"✅ Graph saved: {OUTPUT_PREFIX}.faiss + {OUTPUT_PREFIX}.pkl")
     
     # Save embeddings
-    embeddings_file = f"embeddings/trained_graph_embeddings.npz"
-    builder.save_embeddings(embeddings_file)
+    builder.save_embeddings(EMBEDDINGS_PATH)
     
     # Save report
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_file = f"reports/report_{timestamp}.json"
+    report_file = f"{REPORT_DIR}/report_{timestamp}.json"
     builder.save_report(report_file, graph_stats, engine_stats)
     
     # Save latest report (for dashboard to load easily)
-    builder.save_report("reports/report_latest.json", graph_stats, engine_stats)
+    builder.save_report(REPORT_LATEST, graph_stats, engine_stats)
     
     print("\n" + "=" * 70)
     print("✅ TRAINING COMPLETE!")
     print("=" * 70)
     print(f"\n📁 Output Files:")
     print(f"  • Graph: {OUTPUT_PREFIX}.pkl, {OUTPUT_PREFIX}.faiss")
-    print(f"  • Embeddings: {embeddings_file}")
+    print(f"  • Embeddings: {EMBEDDINGS_PATH}")
     print(f"  • Report: {report_file}")
-    print(f"  • Latest: reports/report_latest.json")
+    print(f"  • Latest: {REPORT_LATEST}")
     print(f"\n🎨 Next Step:")
     print(f"  Run: streamlit run app_dashboard.py")
     print("=" * 70)

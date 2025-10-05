@@ -32,12 +32,21 @@ This system automatically handles repetitive UI workflows by:
 - **Backward compatible**: `ConversationParser` alias points to `StreamingConversationParser`
 
 #### 2. Image Embedder (`image_embedder.py`)
-- **Voyage AI multimodal-3** model for converting screenshots to 1024-dimensional vectors
+- **Two embedding providers** available (configurable in `config.yaml`):
+  - **Voyage AI** (default): Multimodal-3 model, 1024-dimensional vectors, high quality, API-based
+  - **SelfMade**: Simple pixel-based, 256-dimensional vectors, fast, no API needed
 - Supports batch processing for efficiency
 - Normalized embeddings for cosine similarity
-- **Security**: 5-layer validation system to prevent fake embeddings
-- **Quality**: State-of-the-art embedding model outperforming OpenAI and Cohere
+- **Security**: 5-layer validation system (Voyage AI)
+- **Quality**: State-of-the-art embedding model outperforming OpenAI and Cohere (Voyage AI)
 - **Tested**: Successfully embedded 627 training images
+
+**Switching Embedding Providers:**
+Simply edit `config.yaml` and change:
+```yaml
+embedding:
+  provider: "voyage"  # Change to "selfmade" for simple pixel embeddings
+```
 
 #### 3. Macro Graph Engine (`macro_graph.py`)
 - ✅ Node structure: `(embedding, action, think_text, metadata, statistics)`
@@ -240,17 +249,33 @@ Conversations are stored as:
 
 ### Embedding Strategy
 
+**Two Options Available** (configured in `config.yaml`):
+
+#### Option 1: Voyage AI (Default)
 - **Model**: Voyage AI multimodal-3 (state-of-the-art)
 - **Dimension**: 1024 (higher than OpenAI/Cohere alternatives)
 - **Normalization**: L2-normalized for cosine similarity
 - **Validation**: 5-layer security system to prevent fake embeddings
+- **Pros**: Highest quality, best accuracy
+- **Cons**: Requires API key and internet connection
+
+#### Option 2: SelfMade (Lightweight)
+- **Model**: Simple pixel-based embedding
+- **Dimension**: 256 (16x16 grayscale pixels)
+- **Normalization**: L2-normalized for cosine similarity
+- **Process**: Convert to grayscale → Resize to 16x16 → Flatten → Normalize
+- **Pros**: No API needed, fast, runs locally
+- **Cons**: Lower quality than Voyage AI
+
+**Common Features:**
 - **Similarity Range**: 0.0 (different) to 1.0 (identical)
 - **Indexing**: FAISS Inner Product index for efficient similarity search
+- **Caching**: Embeddings cached to disk for reuse
 
 ### Graph Visualization
 
 - **Method**: MDS (Multidimensional Scaling)
-- **Purpose**: Reduces 1024D embeddings to 2D for visualization
+- **Purpose**: Reduces high-dimensional embeddings (1024D or 256D) to 2D for visualization
 - **Benefit**: Node proximity reflects actual visual similarity
 - **Interactive**: Hover to see node details, visit counts, and actions
 

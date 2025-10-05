@@ -12,15 +12,16 @@ Run: python test.py
 """
 
 import json
+import yaml
 from datetime import datetime
 from typing import List, Dict, Any
 
-from data_parser import StreamingConversationParser
-from image_embedder import ImageEmbedder
-from macro_graph import MacroGraph
-from replay_engine import ReplayEngine
-from replay_types import ReplayDecision
-from utils import print_statistics, truncate_text, compare_actions
+from src.data_parser import StreamingConversationParser
+from src.image_embedder import create_embedder
+from src.macro_graph import MacroGraph
+from src.replay_engine import ReplayEngine
+from src.replay_types import ReplayDecision
+from src.utils import print_statistics, truncate_text, compare_actions
 
 
 class GraphTester:
@@ -225,16 +226,43 @@ def main():
     print("🧪 AUTONOMOUS MACRO REPLAY SYSTEM - TESTING")
     print("=" * 70)
     
-    # Configuration
-    TEST_FILES = ['data_validation_split/maf_validate.json']
-    MAX_CONVERSATIONS = 5  # Set to None for all conversations
-    TRAINED_GRAPH_PATH = "models/trained_graph"  # Load from models/ directory
-    OUTPUT_PREFIX = "test_results/test"  # Save to test_results/ directory
+    # ========================================================================
+    # Load Configuration
+    # ========================================================================
+    print("\n📋 Loading configuration from config/config.yaml...")
+    with open('config/config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Extract configuration values
+    embedding_provider = config.get('embedding', {}).get('provider', 'voyage')
+    
+    # Data configuration
+    TEST_FILES = config.get('data', {}).get('validation_files', ['data_validation_split/maf_validate.json'])
+    MAX_CONVERSATIONS = config.get('data', {}).get('max_conversations_test', None)
+    
+    # Matching configuration
+    SIMILARITY_THRESHOLD = config.get('matching', {}).get('similarity_threshold', 0.90)
+    
+    # Input/Output paths
+    TRAINED_GRAPH_PATH = config.get('output', {}).get('trained_graph_path', 'models/trained_graph')
+    TEST_RESULTS_DIR = config.get('output', {}).get('test_results_dir', 'test_results')
+    TEST_REPORT_LATEST = config.get('output', {}).get('test_report_latest', 'test_results/test_report_latest.json')
+    TEST_EMBEDDINGS_PATH = config.get('output', {}).get('test_embeddings_path', 'embeddings/test_embeddings.npz')
+    
+    # Cache paths
+    if embedding_provider == "voyage":
+        CACHE_FILE = config.get('output', {}).get('voyage_cache', 'cache/embedding_cache.pkl')
+    else:
+        CACHE_FILE = config.get('output', {}).get('selfmade_cache', 'cache/selfmade_embedding_cache.pkl')
     
     print(f"\n⚙️  Configuration:")
+    print(f"  • Embedding provider: {embedding_provider.upper()}")
     print(f"  • Test files: {TEST_FILES}")
     print(f"  • Max conversations: {MAX_CONVERSATIONS if MAX_CONVERSATIONS else 'ALL'}")
     print(f"  • Trained graph: {TRAINED_GRAPH_PATH}")
+    print(f"  • Similarity threshold: {SIMILARITY_THRESHOLD}")
+    print(f"  • Output directory: {TEST_RESULTS_DIR}")
+    print(f"  • Cache file: {CACHE_FILE}")
     
     # ========================================================================
     # STEP 1: Load Trained Graph
@@ -242,10 +270,10 @@ def main():
     print("\n🔧 Step 1: Loading trained graph...")
     
     # Initialize embedder (same as training)
-    embedder = ImageEmbedder()
+    embedder = create_embedder(provider=embedding_provider, cache_file=CACHE_FILE)
     
-    # Create empty graph with same config
-    graph = MacroGraph(embedding_dim=1024, similarity_threshold=0.95)
+    # Create empty graph (embedding_dim will be set from loaded graph)
+    graph = MacroGraph(embedding_dim=embedder.embedding_dim, similarity_threshold=SIMILARITY_THRESHOLD)
     
     # Load trained graph from disk
     try:
@@ -257,7 +285,7 @@ def main():
         return
     
     # Initialize replay engine with loaded graph
-    replay_engine = ReplayEngine(graph, similarity_threshold=0.90)
+    replay_engine = ReplayEngine(graph, similarity_threshold=SIMILARITY_THRESHOLD)
     
     # Initialize tester
     tester = GraphTester(graph, embedder, replay_engine)
@@ -347,23 +375,22 @@ def main():
     print("\n💾 Step 3: Saving test results...")
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_file = f"test_results/test_report_{timestamp}.json"
+    report_file = f"{TEST_RESULTS_DIR}/test_report_{timestamp}.json"
     tester.save_report(report_file, test_stats, graph_stats)
     
     # Save latest test report
-    tester.save_report("test_results/test_report_latest.json", test_stats, graph_stats)
+    tester.save_report(TEST_REPORT_LATEST, test_stats, graph_stats)
 
     # Save test embeddings for visualization
-    embeddings_file = f"embeddings/test_embeddings.npz"
-    tester.save_test_embeddings(embeddings_file)
+    tester.save_test_embeddings(TEST_EMBEDDINGS_PATH)
 
     print("\n" + "=" * 70)
     print("✅ TESTING COMPLETE!")
     print("=" * 70)
     print(f"\n📁 Output Files:")
     print(f"  • Test Report: {report_file}")
-    print(f"  • Latest: test_results/test_report_latest.json")
-    print(f"  • Test Embeddings: {embeddings_file}")
+    print(f"  • Latest: {TEST_REPORT_LATEST}")
+    print(f"  • Test Embeddings: {TEST_EMBEDDINGS_PATH}")
     
     # Summary
     if test_stats:
