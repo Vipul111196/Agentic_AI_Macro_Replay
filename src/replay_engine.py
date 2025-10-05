@@ -5,8 +5,8 @@ Handles state matching and action replay with AI fallback.
 
 import numpy as np
 from typing import Dict, Any
-from replay_types import ReplayDecision, ReplayResult
-from utils import print_statistics
+from .replay_types import ReplayDecision, ReplayResult
+from .utils import print_statistics
 
 
 class ReplayEngine:

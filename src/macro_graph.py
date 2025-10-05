@@ -9,8 +9,8 @@ from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 import faiss
-from replay_types import ReplayDecision
-from utils import compare_actions
+from .replay_types import ReplayDecision
+from .utils import compare_actions
 
 
 @dataclass

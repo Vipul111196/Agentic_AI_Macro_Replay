@@ -35,5 +35,6 @@ env/
 
 # Environment
 .env
-data_validation_split/
+data/
+output/
 TRAIN_TEST_WORKFLOW.md

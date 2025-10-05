@@ -1,0 +1,113 @@
+# ============================================================================
+# Autonomous Macro Replay System Configuration
+# ============================================================================
+
+# ============================================================================
+# Image Embedding Configuration
+# ============================================================================
+# Choose your embedding provider below. Both options produce normalized vectors
+# suitable for cosine similarity search.
+#
+# TO SWITCH PROVIDERS: Simply change the "provider" value and re-run train.py
+# ============================================================================
+embedding:
+  provider: "voyage"                        # Options: "voyage" or "selfmade"
+                                             
+                                             # OPTION 1: "voyage" (Recommended for best accuracy)
+                                             # - Uses Voyage AI multimodal-3 model
+                                             # - Embedding dimension: 1024
+                                             # - Requires: VOYAGE_API_KEY environment variable
+                                             # - Pros: State-of-the-art quality, best accuracy
+                                             # - Cons: Requires API key, internet connection
+                                             
+                                             # OPTION 2: "selfmade" (Lightweight alternative)
+                                             # - Uses simple pixel-based embedding (16x16 grayscale)
+                                             # - Embedding dimension: 256
+                                             # - Requires: Nothing (runs locally)
+                                             # - Pros: No API needed, fast, runs offline
+                                             # - Cons: Lower quality than Voyage AI
+  
+  model_name: "voyage-multimodal-3"        # Voyage AI model (only used when provider="voyage")
+  embedding_dim: auto                      # Auto-detect based on provider (1024 or 256)
+  validate_embeddings: true                # Enable embedding validation (voyage only)
+  timeout: 30                               # API request timeout in seconds (voyage only)
+
+# Similarity Matching
+matching:
+  similarity_threshold: 0.90    # Cosine similarity threshold for replay
+  top_k_candidates: 5           # Number of similar nodes to consider
+  min_visit_count: 1            # Minimum visits before trusting a node
+
+# Macro Graph
+graph:
+  max_nodes: 100000              # Maximum nodes before pruning
+  enable_pruning: false          # Prune low-success nodes
+  min_success_rate: 0.7          # Minimum success rate to keep node
+
+# Vector Index (FAISS)
+vector_index:
+  index_type: "IndexFlatIP"      # Inner product for cosine similarity
+  use_gpu: false                 # Use GPU for FAISS (if available)
+  rebuild_interval: 1000         # Rebuild index every N additions
+
+# ============================================================================
+# Data Processing & File Paths
+# ============================================================================
+data:
+  # Input data files
+  training_files:
+    - "data/data_validation_split_hannes/maf_train.json"
+    - "data/data_validation_split_hannes/sona_train.json"
+  validation_files:
+    - "data/data_validation_split_hannes/maf_validate.json"
+    - "data/data_validation_split_hannes/sona_validate.json"
+  
+  # Processing limits
+  max_conversations_train: null    # Maximum conversations to process for training (null = all)
+  max_conversations_test: null     # Maximum conversations to process for testing (null = all)
+  batch_size: 10                   # Batch size for processing
+  max_image_size: [1024, 1024]     # Resize images if larger
+
+# Action Extraction
+actions:
+  coordinate_variance: 10         # Pixel tolerance for coordinate matching
+
+# ============================================================================
+# Output Paths & File Naming
+# ============================================================================
+output:
+  # Training outputs
+  trained_graph_path: "output/models/trained_graph"           # Path prefix for trained graph (creates .pkl and .faiss)
+  trained_embeddings_path: "output/embeddings/trained_graph_embeddings.npz"  # Training embeddings for visualization
+  training_report_dir: "output/reports"                       # Directory for training reports
+  training_report_latest: "output/reports/report_latest.json" # Latest training report
+  
+  # Testing outputs
+  test_results_dir: "output/test_results"                     # Directory for test results
+  test_report_latest: "output/test_results/test_report_latest.json"  # Latest test report
+  test_embeddings_path: "output/embeddings/test_embeddings.npz"      # Test embeddings for visualization
+  
+  # Cache directories
+  embedding_cache_dir: "output/cache"                         # Directory for embedding caches
+  voyage_cache: "output/cache/embedding_cache.pkl"            # Voyage AI embedding cache
+  selfmade_cache: "output/cache/selfmade_embedding_cache.pkl" # SelfMade embedding cache
+
+# ============================================================================
+# Logging & Monitoring
+# ============================================================================
+logging:
+  level: "INFO"
+  log_file: "macro_replay.log"
+  save_embeddings: true
+  save_graph_snapshots: true
+  snapshot_interval: 500          # Save graph every N conversations
+
+# ============================================================================
+# Validation Settings
+# ============================================================================
+validation:
+  enable_fallback_logging: true
+  save_failure_cases: true
+  metrics_output: "validation_metrics.json"
+
+
