@@ -353,8 +353,24 @@ Achieved results:
 
 ---
 
-**Status**: ✅ 100% COMPLETE - Production Ready  
-**Last Updated**: October 3, 2025  
-**Current Phase**: Deployment & Monitoring
+## Docker
 
-# Agentic_AI_Macro_Replay
+```bash
+cp .env.example .env   # add your VOYAGE_API_KEY
+make docker-up         # dashboard at http://localhost:8501
+```
+
+Or without Docker:
+
+```bash
+make install
+make train             # build the graph from training data
+make test              # evaluate on validation data
+make dashboard         # launch Streamlit UI
+```
+
+---
+
+**Status**: 100% COMPLETE - Production Ready  
+**Last Updated**: November 2025  
+**Current Phase**: Deployment & Monitoring
